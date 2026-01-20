@@ -1,0 +1,8 @@
+
+{
+  "name": "NutriLens",
+  "description": "Smart nutrition tracker using AI to identify food and track calories and macros.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
