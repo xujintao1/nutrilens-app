@@ -4,7 +4,7 @@ import { Capacitor } from '@capacitor/core';
 // API 服务器地址配置
 // 部署到 Vercel 后，请将此 URL 替换为你的 Vercel 项目地址
 // 例如：https://nutrilens-api.vercel.app
-const PRODUCTION_API_URL = ''; // TODO: 部署后填入 Vercel URL
+const PRODUCTION_API_URL = 'https://nutrilens-app-qnib.vercel.app';
 
 const getApiBaseUrl = (): string => {
   // 如果已配置生产环境 URL，优先使用
