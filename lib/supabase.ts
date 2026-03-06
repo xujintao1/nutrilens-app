@@ -145,13 +145,29 @@ export async function getTodayMeals(userId: string): Promise<MealRecord[]> {
 /**
  * 获取用户的所有饮食记录
  */
-export async function getAllMeals(userId: string, limit = 50): Promise<MealRecord[]> {
+export async function getAllMeals(userId: string, limit = 100): Promise<MealRecord[]> {
   const { data, error } = await supabase
     .from('meals')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
+  
+  if (error) throw error;
+  return data || [];
+}
+
+/**
+ * 获取指定日期范围的饮食记录
+ */
+export async function getMealsByDateRange(userId: string, startDate: string, endDate: string): Promise<MealRecord[]> {
+  const { data, error } = await supabase
+    .from('meals')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('created_at', startDate)
+    .lte('created_at', endDate)
+    .order('created_at', { ascending: false });
   
   if (error) throw error;
   return data || [];
@@ -196,6 +212,18 @@ export async function updateMeal(mealId: string, updates: Partial<MealRecord>) {
   
   if (error) throw error;
   return data;
+}
+
+/**
+ * 删除用户的所有饮食记录
+ */
+export async function deleteAllMeals(userId: string) {
+  const { error } = await supabase
+    .from('meals')
+    .delete()
+    .eq('user_id', userId);
+  
+  if (error) throw error;
 }
 
 // ==================== 图片存储服务 ====================

@@ -11,19 +11,22 @@ export enum Screen {
   PROFILE = 'PROFILE',
   SETTINGS = 'SETTINGS',
   HISTORY = 'HISTORY',
-  MEAL_DETAIL = 'MEAL_DETAIL', // 新增餐食详情
-  GOALS = 'GOALS',             // 新增目标设置
-  NOTIFICATIONS = 'NOTIFICATIONS' // 新增通知中心
+  MEAL_DETAIL = 'MEAL_DETAIL',
+  GOALS = 'GOALS',
+  NOTIFICATIONS = 'NOTIFICATIONS'
 }
+
+export const MEAL_TYPES = ['早餐', '午餐', '晚餐', '加餐'] as const;
+export type MealType = typeof MEAL_TYPES[number];
 
 export interface Meal {
   id: string;
   name: string;
-  type: '早餐' | '午餐' | '晚餐' | '加餐';
+  type: MealType;
   time: string;
   kcal: number;
   image?: string;
-  // 为了详情页，我们可以由AI估算或存储时保留这些数据，这里设为可选
+  created_at?: string;
   macros?: {
     protein: number;
     carbs: number;
@@ -54,4 +57,10 @@ export interface Recipe {
   image: string;
   ingredients: string[];
   steps: string[];
+}
+
+export interface WaterRecord {
+  date: string;
+  glasses: number;
+  goal: number;
 }

@@ -7,17 +7,26 @@ interface StatsViewProps {
   userProfile: { dailyCalories: number; weight: number; goalWeight: number };
 }
 
+function getDateKey(dateStr?: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const StatsView: React.FC<StatsViewProps> = ({ history, userProfile }) => {
   const [range, setRange] = useState<'week' | 'month'>('week');
 
-  // 计算今日总热量
-  const todayCalories = useMemo(() => {
-    return history.reduce((sum, meal) => sum + meal.kcal, 0);
+  const todayMeals = useMemo(() => {
+    const todayKey = getDateKey(new Date().toISOString());
+    return history.filter(m => getDateKey(m.created_at) === todayKey);
   }, [history]);
 
-  // 计算今日宏量营养素
+  const todayCalories = useMemo(() => {
+    return todayMeals.reduce((sum, meal) => sum + meal.kcal, 0);
+  }, [todayMeals]);
+
   const todayMacros = useMemo(() => {
-    return history.reduce((acc, meal) => {
+    return todayMeals.reduce((acc, meal) => {
       if (meal.macros) {
         return {
           protein: acc.protein + (meal.macros.protein || 0),
@@ -27,9 +36,8 @@ const StatsView: React.FC<StatsViewProps> = ({ history, userProfile }) => {
       }
       return acc;
     }, { protein: 0, carbs: 0, fat: 0 });
-  }, [history]);
+  }, [todayMeals]);
 
-  // 计算宏量比例
   const macroRatios = useMemo(() => {
     const total = todayMacros.protein + todayMacros.carbs + todayMacros.fat;
     if (total === 0) return { protein: 33, carbs: 34, fat: 33 };
@@ -40,29 +48,64 @@ const StatsView: React.FC<StatsViewProps> = ({ history, userProfile }) => {
     };
   }, [todayMacros]);
 
-  // 生成周数据（今天 + 之前 6 天的模拟数据）
-  const weeklyData = useMemo(() => {
+  const calByDate = useMemo(() => {
+    const map: Record<string, number> = {};
+    history.forEach(m => {
+      const key = getDateKey(m.created_at);
+      if (key) map[key] = (map[key] || 0) + m.kcal;
+    });
+    return map;
+  }, [history]);
+
+  const chartData = useMemo(() => {
     const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     const today = new Date();
-    const todayIndex = today.getDay();
-    
-    return days.map((dayName, i) => {
-      if (i === todayIndex) {
-        // 今天使用真实数据
-        return { day: dayName, cal: todayCalories, max: userProfile.dailyCalories, isToday: true };
-      }
-      // 其他天使用模拟数据
-      const mockCal = Math.floor(1500 + Math.random() * 800);
-      return { day: dayName, cal: mockCal, max: userProfile.dailyCalories, isToday: false };
-    });
-  }, [todayCalories, userProfile.dailyCalories]);
 
-  const maxVal = Math.max(...weeklyData.map(d => d.cal), userProfile.dailyCalories);
-  const avgCalories = Math.round(weeklyData.reduce((s, d) => s + d.cal, 0) / 7);
+    if (range === 'week') {
+      const result = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const key = getDateKey(d.toISOString());
+        const cal = calByDate[key] || 0;
+        result.push({
+          label: i === 0 ? '今' : days[d.getDay()].replace('周', ''),
+          cal,
+          max: userProfile.dailyCalories,
+          isToday: i === 0,
+        });
+      }
+      return result;
+    } else {
+      const result = [];
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const key = getDateKey(d.toISOString());
+        const cal = calByDate[key] || 0;
+        result.push({
+          label: i === 0 ? '今' : i % 5 === 0 ? `${d.getDate()}` : '',
+          cal,
+          max: userProfile.dailyCalories,
+          isToday: i === 0,
+        });
+      }
+      return result;
+    }
+  }, [calByDate, range, userProfile.dailyCalories]);
+
+  const maxVal = Math.max(...chartData.map(d => d.cal), userProfile.dailyCalories);
+  const totalCal = chartData.reduce((s, d) => s + d.cal, 0);
+  const daysWithData = chartData.filter(d => d.cal > 0).length;
+  const avgCalories = daysWithData > 0 ? Math.round(totalCal / daysWithData) : 0;
   
-  // 蛋白质目标进度
-  const proteinTarget = 150;
+  const proteinTarget = Math.round(userProfile.dailyCalories * 0.3 / 4);
   const proteinProgress = Math.min(Math.round((todayMacros.protein / proteinTarget) * 100), 100);
+
+  const weightDiff = userProfile.weight - userProfile.goalWeight;
+  const weightProgress = userProfile.goalWeight > 0 
+    ? Math.min(Math.max(100 - (Math.abs(weightDiff) / userProfile.weight * 100), 0), 100) 
+    : 0;
 
   return (
     <div className="h-full flex flex-col bg-[#F9FBFA] overflow-y-auto no-scrollbar pb-32">
@@ -86,52 +129,58 @@ const StatsView: React.FC<StatsViewProps> = ({ history, userProfile }) => {
       
       <div className="px-6 space-y-6 mt-2">
         
-        {/* 1. 热量趋势柱状图 */}
+        {/* Calorie Trend Bar Chart */}
         <section className="bg-white p-6 rounded-[2rem] shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-gray-50 flex flex-col h-[280px]">
             <div className="flex items-start justify-between mb-8 shrink-0">
                 <div>
                     <h2 className="text-lg font-bold text-gray-800">热量摄入</h2>
-                    <p className="text-xs text-gray-400 font-medium mt-1">平均每日 {avgCalories.toLocaleString()} 千卡</p>
+                    <p className="text-xs text-gray-400 font-medium mt-1">
+                      {daysWithData > 0 ? `平均每日 ${avgCalories.toLocaleString()} 千卡` : '暂无数据'}
+                    </p>
                 </div>
                 <div className="size-10 rounded-full bg-orange-50 flex items-center justify-center text-orange-400">
                     <span className="material-symbols-outlined">local_fire_department</span>
                 </div>
             </div>
             
-            <div className="flex-1 flex items-end justify-between gap-3 px-2">
-                {weeklyData.map((d: any, i) => {
+            <div className="flex-1 flex items-end justify-between gap-[2px] px-1">
+                {chartData.map((d: any, i) => {
                     const isOver = d.cal > d.max;
-                    const heightPercent = Math.max(10, Math.min((d.cal / (maxVal * 1.1)) * 100, 100));
+                    const heightPercent = maxVal > 0 ? Math.max(d.cal > 0 ? 8 : 2, Math.min((d.cal / (maxVal * 1.1)) * 100, 100)) : 2;
                     
                     return (
-                        <div key={i} className="flex flex-col items-center gap-3 flex-1 group cursor-pointer h-full justify-end">
+                        <div key={i} className="flex flex-col items-center gap-2 flex-1 group cursor-pointer h-full justify-end">
                             <div className="relative w-full flex items-end justify-center h-[85%]">
-                                {/* Tooltip */}
                                 <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 text-white text-[10px] py-1 px-2 rounded-lg font-bold whitespace-nowrap z-10 shadow-lg pointer-events-none">
-                                    {d.cal} 千卡{d.isToday && ' (今天)'}
+                                    {d.cal > 0 ? `${d.cal} 千卡` : '无数据'}{d.isToday && ' (今天)'}
                                     <div className="absolute bottom-[-4px] left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-800 rotate-45"></div>
                                 </div>
-                                {/* Bar - 今天用不同颜色 */}
                                 <div 
-                                    className={`w-full max-w-[14px] rounded-full transition-all duration-700 ease-out ${
-                                        d.isToday 
-                                            ? (isOver ? 'bg-orange-500' : 'bg-primary ring-2 ring-primary/30') 
-                                            : (isOver ? 'bg-orange-300' : 'bg-primary/60')
+                                    className={`w-full rounded-full transition-all duration-700 ease-out ${
+                                        range === 'week' ? 'max-w-[14px]' : 'max-w-[6px]'
+                                    } ${
+                                        d.cal === 0 
+                                            ? 'bg-gray-100'
+                                            : d.isToday 
+                                                ? (isOver ? 'bg-orange-500 ring-2 ring-orange-200' : 'bg-primary ring-2 ring-primary/30') 
+                                                : (isOver ? 'bg-orange-300' : 'bg-primary/60')
                                     }`}
                                     style={{ height: `${heightPercent}%` }}
                                 ></div>
-                                <div className="absolute bottom-0 w-full max-w-[14px] h-full bg-gray-50 rounded-full -z-10"></div>
+                                <div className={`absolute bottom-0 w-full ${range === 'week' ? 'max-w-[14px]' : 'max-w-[6px]'} h-full bg-gray-50 rounded-full -z-10`}></div>
                             </div>
-                            <span className={`text-[10px] font-bold uppercase h-[15%] flex items-start ${d.isToday ? 'text-primary' : 'text-gray-300'}`}>
-                                {d.day.replace('周', '')}
-                            </span>
+                            {d.label && (
+                              <span className={`text-[10px] font-bold uppercase h-[15%] flex items-start ${d.isToday ? 'text-primary' : 'text-gray-300'}`}>
+                                  {d.label}
+                              </span>
+                            )}
                         </div>
                     );
                 })}
             </div>
         </section>
 
-        {/* 2. 营养均衡度分析 */}
+        {/* Nutrition Balance */}
         <section className="grid grid-cols-2 gap-4">
             <div className="bg-primary text-white p-5 rounded-[2rem] shadow-fab flex flex-col justify-between relative overflow-hidden h-[180px]">
                 <div className="absolute -right-4 -top-4 size-24 bg-white/10 rounded-full blur-xl"></div>
@@ -141,7 +190,7 @@ const StatsView: React.FC<StatsViewProps> = ({ history, userProfile }) => {
                         <span className="text-xs font-bold opacity-80">今日表现</span>
                     </div>
                     <h3 className="text-xl font-bold leading-tight tracking-tight">
-                        蛋白质摄入<br/>{proteinProgress >= 80 ? '完美达标' : proteinProgress >= 50 ? '进度良好' : '继续加油'}
+                        蛋白质摄入<br/>{proteinProgress >= 80 ? '完美达标' : proteinProgress >= 50 ? '进度良好' : todayMacros.protein === 0 ? '暂无数据' : '继续加油'}
                     </h3>
                 </div>
                 <div className="relative z-10 mb-2">
@@ -160,11 +209,8 @@ const StatsView: React.FC<StatsViewProps> = ({ history, userProfile }) => {
                  <div className="flex-1 flex flex-col items-center justify-center -mt-2">
                      <div className="relative size-24">
                         <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
-                            {/* Background */}
                             <path className="text-gray-100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3.5" />
-                            {/* Fat - 根据比例绘制 */}
                             <path className="text-accent" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3.5" strokeDasharray={`${macroRatios.fat}, 100`} />
-                            {/* Protein */}
                             <path className="text-primary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3.5" strokeDasharray={`${macroRatios.protein}, 100`} strokeDashoffset={`-${macroRatios.fat}`} />
                         </svg>
                         <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -181,80 +227,69 @@ const StatsView: React.FC<StatsViewProps> = ({ history, userProfile }) => {
             </div>
         </section>
 
-        {/* 3. 体重趋势 SVG 线图 */}
-        <section className="bg-white p-6 rounded-[2rem] shadow-soft border border-gray-50 mb-6 h-[260px] flex flex-col">
-            <div className="flex items-center justify-between mb-4 shrink-0">
-                <h2 className="text-lg font-bold text-gray-800">体重变化</h2>
-                <div className="flex items-center gap-1 px-2.5 py-1 bg-green-50 rounded-lg">
-                    <span className="material-symbols-outlined text-green-600 text-sm">trending_down</span>
-                    <span className="text-xs font-bold text-green-600">-2.4kg</span>
+        {/* Weight Progress */}
+        <section className="bg-white p-6 rounded-[2rem] shadow-soft border border-gray-50 mb-6">
+            <div className="flex items-center justify-between mb-6">
+                <h2 className="text-lg font-bold text-gray-800">体重目标</h2>
+                <div className={`flex items-center gap-1 px-2.5 py-1 rounded-lg ${
+                  weightDiff > 0 ? 'bg-blue-50' : weightDiff < 0 ? 'bg-orange-50' : 'bg-green-50'
+                }`}>
+                    <span className={`material-symbols-outlined text-sm ${
+                      weightDiff > 0 ? 'text-blue-600' : weightDiff < 0 ? 'text-orange-600' : 'text-green-600'
+                    }`}>
+                      {weightDiff > 0 ? 'trending_down' : weightDiff < 0 ? 'trending_up' : 'check_circle'}
+                    </span>
+                    <span className={`text-xs font-bold ${
+                      weightDiff > 0 ? 'text-blue-600' : weightDiff < 0 ? 'text-orange-600' : 'text-green-600'
+                    }`}>
+                      {Math.abs(weightDiff) < 0.1 ? '已达标' : `${weightDiff > 0 ? '需减' : '需增'} ${Math.abs(weightDiff).toFixed(1)}kg`}
+                    </span>
                 </div>
             </div>
             
-            <div className="relative flex-1 w-full">
-                {/* Y-Axis Labels & Grid Lines - Separated for cleaner look */}
-                <div className="absolute inset-0 flex flex-col justify-between text-[10px] text-gray-300 font-bold pointer-events-none pb-6">
-                    <div className="flex items-center gap-2">
-                        <span className="w-8 text-right">75kg</span>
-                        <div className="h-px bg-gray-50 flex-1 border-b border-dashed border-gray-100"></div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className="w-8 text-right">70kg</span>
-                        <div className="h-px bg-gray-50 flex-1 border-b border-dashed border-gray-100"></div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className="w-8 text-right">65kg</span>
-                        <div className="h-px bg-gray-50 flex-1 border-b border-dashed border-gray-100"></div>
-                    </div>
-                </div>
+            <div className="flex items-end justify-between mb-6">
+              <div className="text-center">
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">当前</p>
+                <p className="text-3xl font-black text-gray-800">{userProfile.weight}<span className="text-sm text-gray-400 ml-1">kg</span></p>
+              </div>
+              <div className="flex-1 mx-4 h-3 bg-gray-100 rounded-full overflow-hidden relative">
+                <div className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all duration-700" style={{ width: `${weightProgress}%` }}></div>
+              </div>
+              <div className="text-center">
+                <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">目标</p>
+                <p className="text-3xl font-black text-primary">{userProfile.goalWeight}<span className="text-sm text-primary/60 ml-1">kg</span></p>
+              </div>
+            </div>
 
-                {/* SVG Curve - Added ViewBox for correct scaling */}
-                <div className="absolute inset-0 left-10 right-0 bottom-6 top-2">
-                    <svg className="w-full h-full overflow-visible" viewBox="0 0 300 120" preserveAspectRatio="none">
-                        <defs>
-                            <linearGradient id="gradientArea" x1="0" x2="0" y1="0" y2="1">
-                                <stop offset="0%" stopColor="#8daa9d" stopOpacity="0.2" />
-                                <stop offset="100%" stopColor="#8daa9d" stopOpacity="0" />
-                            </linearGradient>
-                            <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-                                <feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#8daa9d" floodOpacity="0.2"/>
-                            </filter>
-                        </defs>
-                        
-                        {/* Area under curve */}
-                        <path 
-                            d="M0,20 C50,20 100,60 150,50 C200,40 250,80 300,90 L300,120 L0,120 Z" 
-                            fill="url(#gradientArea)" 
-                        />
-                        
-                        {/* The Line */}
-                        <path 
-                            d="M0,20 C50,20 100,60 150,50 C200,40 250,80 300,90" 
-                            fill="none" 
-                            stroke="#8daa9d" 
-                            strokeWidth="3" 
-                            strokeLinecap="round"
-                            filter="url(#shadow)"
-                        />
-                        
-                        {/* Data Points */}
-                        <circle cx="0" cy="20" r="4" fill="white" stroke="#8daa9d" strokeWidth="2.5" />
-                        <circle cx="150" cy="50" r="4" fill="white" stroke="#8daa9d" strokeWidth="2.5" />
-                        <circle cx="300" cy="90" r="4" fill="white" stroke="#8daa9d" strokeWidth="2.5" />
-                    </svg>
-                </div>
-
-                {/* X-Axis Labels */}
-                <div className="absolute bottom-0 left-10 right-0 flex justify-between text-[10px] font-bold text-gray-300 uppercase transform translate-y-2">
-                    <span>3月1日</span>
-                    <span>3月15日</span>
-                    <span>3月30日</span>
-                </div>
+            <div className="grid grid-cols-3 gap-3">
+              <MiniStat label="BMI" value={getBmiValue(userProfile.weight, 175)} tag={getBmiLabel(userProfile.weight, 175)} />
+              <MiniStat label="本周记录" value={`${daysWithData}`} tag="天" />
+              <MiniStat label="日均热量" value={avgCalories > 0 ? `${avgCalories}` : '-'} tag="kcal" />
             </div>
         </section>
       </div>
     </div>
   );
 };
+
+function getBmiValue(weight: number, height: number): string {
+  return (weight / ((height / 100) ** 2)).toFixed(1);
+}
+
+function getBmiLabel(weight: number, height: number): string {
+  const bmi = weight / ((height / 100) ** 2);
+  if (bmi < 18.5) return '偏瘦';
+  if (bmi < 24) return '正常';
+  if (bmi < 28) return '偏胖';
+  return '肥胖';
+}
+
+const MiniStat = ({ label, value, tag }: { label: string; value: string; tag: string }) => (
+  <div className="bg-gray-50 p-3 rounded-xl text-center">
+    <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">{label}</p>
+    <p className="text-lg font-black text-gray-800">{value}</p>
+    <p className="text-[10px] font-bold text-primary">{tag}</p>
+  </div>
+);
 
 export default StatsView;

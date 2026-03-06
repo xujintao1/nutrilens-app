@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Meal } from '../types';
 
 interface HistoryViewProps {
@@ -8,7 +8,46 @@ interface HistoryViewProps {
   onMealSelect: (meal: Meal) => void;
 }
 
+function formatDateLabel(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
+  
+  if (diffDays === 0) return '今天';
+  if (diffDays === 1) return '昨天';
+  if (diffDays === 2) return '前天';
+  if (diffDays < 7) return `${diffDays}天前`;
+  return date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' });
+}
+
+function getDateKey(dateStr?: string): string {
+  if (!dateStr) return 'unknown';
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const HistoryView: React.FC<HistoryViewProps> = ({ history, onBack, onMealSelect }) => {
+  const groupedHistory = useMemo(() => {
+    const groups: Record<string, Meal[]> = {};
+    history.forEach(meal => {
+      const key = getDateKey(meal.created_at);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(meal);
+    });
+    return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a));
+  }, [history]);
+
+  const stats = useMemo(() => {
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const weekMeals = history.filter(m => m.created_at && new Date(m.created_at) >= weekAgo);
+    const totalCal = weekMeals.reduce((s, m) => s + m.kcal, 0);
+    const avgCal = weekMeals.length > 0 ? Math.round(totalCal / weekMeals.length) : 0;
+    return { weekCount: weekMeals.length, avgCal };
+  }, [history]);
+
   return (
     <div className="h-full flex flex-col bg-[#F9FBFA] animate-slide-in-right overflow-y-auto no-scrollbar">
       <header className="flex items-center px-6 py-5 sticky top-0 bg-[#F9FBFA]/90 backdrop-blur-md z-20">
@@ -19,47 +58,50 @@ const HistoryView: React.FC<HistoryViewProps> = ({ history, onBack, onMealSelect
       </header>
 
       <div className="px-6 py-4 space-y-6 pb-32">
-        {/* Statistics Summary */}
         <div className="bg-primary text-white p-6 rounded-[2rem] shadow-fab flex items-center justify-between">
             <div>
                 <p className="text-white/80 text-xs font-bold uppercase mb-1">本周记录</p>
-                <h2 className="text-3xl font-extrabold">{history.length + 12} <span className="text-lg font-medium opacity-80">餐</span></h2>
+                <h2 className="text-3xl font-extrabold">{stats.weekCount} <span className="text-lg font-medium opacity-80">餐</span></h2>
             </div>
             <div className="h-12 w-[1px] bg-white/20"></div>
             <div>
                  <p className="text-white/80 text-xs font-bold uppercase mb-1">平均热量</p>
-                 <h2 className="text-3xl font-extrabold">450 <span className="text-lg font-medium opacity-80">kcal</span></h2>
+                 <h2 className="text-3xl font-extrabold">{stats.avgCal} <span className="text-lg font-medium opacity-80">kcal</span></h2>
             </div>
         </div>
 
-        {/* Timeline */}
-        <div>
-            <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-4 ml-2">今天</h3>
-            <div className="space-y-3">
-                {history.map(meal => (
+        {groupedHistory.length === 0 ? (
+          <div className="text-center py-16">
+            <span className="material-symbols-outlined text-5xl text-gray-200 mb-3">history</span>
+            <p className="text-gray-400 text-sm">暂无饮食记录</p>
+          </div>
+        ) : (
+          groupedHistory.map(([dateKey, meals]) => {
+            const dayCalories = meals.reduce((s, m) => s + m.kcal, 0);
+            return (
+              <div key={dateKey}>
+                <div className="flex items-center justify-between mb-4 ml-2">
+                  <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider">{formatDateLabel(dateKey)}</h3>
+                  <span className="text-[10px] font-bold text-gray-300">{dayCalories} kcal · {meals.length}餐</span>
+                </div>
+                <div className="space-y-3">
+                  {meals.map(meal => (
                     <HistoryItem key={meal.id} meal={meal} onClick={() => onMealSelect(meal)} />
-                ))}
-            </div>
-        </div>
-
-        {/* Mock Yesterday Data - Not interactive for now as they are static */}
-        <div>
-            <h3 className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-4 ml-2">昨天</h3>
-            <div className="space-y-3 opacity-60 grayscale hover:grayscale-0 hover:opacity-100 transition-all duration-500">
-                <HistoryItem meal={{ id: 'old1', name: '全麦三明治', type: '早餐', time: '08:15', kcal: 320, image: 'https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=200&h=200' }} onClick={() => alert('这是历史演示数据，无法查看详情')} />
-                <HistoryItem meal={{ id: 'old2', name: '牛肉波奇饭', type: '午餐', time: '12:30', kcal: 550, image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=200&h=200' }} onClick={() => alert('这是历史演示数据，无法查看详情')} />
-                <HistoryItem meal={{ id: 'old3', name: '希腊酸奶', type: '加餐', time: '16:00', kcal: 120, image: 'https://images.unsplash.com/photo-1488477181946-6428a0291777?auto=format&fit=crop&w=200&h=200' }} onClick={() => alert('这是历史演示数据，无法查看详情')} />
-            </div>
-        </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
 };
 
-const HistoryItem: React.FC<{ meal: any; onClick?: () => void }> = ({ meal, onClick }) => (
+const HistoryItem: React.FC<{ meal: Meal; onClick?: () => void }> = ({ meal, onClick }) => (
     <div onClick={onClick} className="bg-white p-3 pr-5 rounded-2xl shadow-soft border border-gray-50 flex items-center gap-4 cursor-pointer active:scale-[0.99] transition-transform">
         <div className="size-16 rounded-xl bg-gray-100 overflow-hidden shrink-0">
-            <img src={meal.image} className="w-full h-full object-cover" alt={meal.name} />
+            <img src={meal.image || 'https://picsum.photos/200'} className="w-full h-full object-cover" alt={meal.name} />
         </div>
         <div className="flex-1">
             <h4 className="font-bold text-gray-800">{meal.name}</h4>
