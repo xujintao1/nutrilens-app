@@ -1,10 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
-import { Screen, Meal, NutritionData, Recipe } from './types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Screen, Meal, NutritionData, Recipe, MealType, WaterRecord } from './types';
 import SplashScreen from './components/SplashScreen';
 import AuthView from './components/AuthView';
 import Dashboard from './components/Dashboard';
-import { getCurrentUser, getUserProfile, getAllMeals, addMeal as addMealToDb, deleteMeal as deleteMealFromDb, upsertUserProfile, onAuthStateChange } from './lib/supabase';
+import { getCurrentUser, getUserProfile, getAllMeals, addMeal as addMealToDb, deleteMeal as deleteMealFromDb, deleteAllMeals, upsertUserProfile, onAuthStateChange } from './lib/supabase';
 import CameraView from './components/CameraView';
 import ResultView from './components/ResultView';
 import ProfileView from './components/ProfileView';
@@ -16,10 +16,32 @@ import HistoryView from './components/HistoryView';
 import MealDetailView from './components/MealDetailView';
 import GoalsView from './components/GoalsView';
 import NotificationsView from './components/NotificationsView';
-import RecipeDetailView from './components/RecipeDetailView'; // Imported new component
+import RecipeDetailView from './components/RecipeDetailView';
 
 const STORAGE_KEY_PROFILE = 'nutrilens_profile_v1';
 const STORAGE_KEY_HISTORY = 'nutrilens_history_v1';
+const STORAGE_KEY_WATER = 'nutrilens_water_v1';
+
+function isToday(dateStr?: string): boolean {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+         d.getMonth() === now.getMonth() &&
+         d.getDate() === now.getDate();
+}
+
+function getAutoMealType(): MealType {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 10) return '早餐';
+  if (hour >= 10 && hour < 14) return '午餐';
+  if (hour >= 14 && hour < 20) return '晚餐';
+  return '加餐';
+}
+
+function getTodayDateStr(): string {
+  return new Date().toISOString().split('T')[0];
+}
 
 const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<Screen>(Screen.AUTH);
@@ -29,57 +51,52 @@ const App: React.FC = () => {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [selectedMeal, setSelectedMeal] = useState<Meal | null>(null);
+  const [pendingMealType, setPendingMealType] = useState<MealType>(getAutoMealType());
 
-  // 默认初始数据
   const defaultProfile = {
-    name: 'Alex Wang',
+    name: 'User',
     weight: 68.5,
     goalWeight: 65.0,
     dailyCalories: 2000,
     height: 175
   };
 
-  const defaultHistory: Meal[] = [
-    {
-      id: '1',
-      name: '燕麦片配莓果',
-      type: '早餐',
-      time: '上午 8:30',
-      kcal: 350,
-      image: 'https://images.unsplash.com/photo-1517673132405-a56a62b18caf?auto=format&fit=crop&w=200&h=200',
-      macros: { protein: 12, carbs: 45, fat: 6 }
-    },
-    {
-      id: '2',
-      name: '香煎鸡肉沙拉',
-      type: '午餐',
-      time: '下午 12:15',
-      kcal: 480,
-      image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=200&h=200',
-      macros: { protein: 40, carbs: 15, fat: 20 }
-    }
-  ];
-
-  // 全局用户状态
   const [userProfile, setUserProfile] = useState(defaultProfile);
-  const [history, setHistory] = useState<Meal[]>(defaultHistory);
+  const [history, setHistory] = useState<Meal[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // 检查用户认证状态
+  const [waterRecord, setWaterRecord] = useState<WaterRecord>({
+    date: getTodayDateStr(),
+    glasses: 0,
+    goal: 8
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_WATER);
+      if (saved) {
+        const parsed: WaterRecord = JSON.parse(saved);
+        if (parsed.date === getTodayDateStr()) {
+          setWaterRecord(parsed);
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }, []);
+
+  const todayMeals = history.filter(m => isToday(m.created_at));
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
         const currentUser = await getCurrentUser();
         if (currentUser) {
           setUser(currentUser);
-          // 从 Supabase 加载用户数据
           await loadUserData(currentUser.id);
           setCurrentScreen(Screen.SPLASH);
         } else {
           setCurrentScreen(Screen.AUTH);
         }
       } catch (e: any) {
-        // AuthSessionMissingError 是正常的（用户未登录），不需要报错
         if (!e?.message?.includes('Auth session missing')) {
           console.error('Auth check failed:', e);
         }
@@ -91,7 +108,6 @@ const App: React.FC = () => {
     
     checkAuth();
     
-    // 监听认证状态变化
     const { data: { subscription } } = onAuthStateChange((user) => {
       setUser(user);
       if (!user) {
@@ -102,10 +118,8 @@ const App: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []);
   
-  // 从 Supabase 加载用户数据
   const loadUserData = async (userId: string) => {
     try {
-      // 加载用户配置
       const profile = await getUserProfile(userId);
       if (profile) {
         setUserProfile({
@@ -117,29 +131,27 @@ const App: React.FC = () => {
         });
       }
       
-      // 加载饮食记录
       const meals = await getAllMeals(userId);
       if (meals.length > 0) {
         setHistory(meals.map(m => ({
           id: m.id,
           name: m.name,
-          type: m.type as any,
+          type: m.type as MealType,
           time: m.time,
           kcal: m.calories,
           image: m.image_url,
+          created_at: m.created_at,
           macros: { protein: m.protein, carbs: m.carbs, fat: m.fat }
         })));
       }
     } catch (e) {
       console.error('Failed to load user data:', e);
-      // 失败时使用本地存储作为备份
       loadFromLocalStorage();
     } finally {
       setIsLoaded(true);
     }
   };
   
-  // 从本地存储加载（备份）
   const loadFromLocalStorage = () => {
     try {
       const savedProfile = localStorage.getItem(STORAGE_KEY_PROFILE);
@@ -157,7 +169,6 @@ const App: React.FC = () => {
     setIsLoaded(true);
   };
   
-  // 认证成功后的处理
   const handleAuthSuccess = async () => {
     setIsAuthChecking(true);
     try {
@@ -174,7 +185,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Save data whenever it changes
   useEffect(() => {
     if (isLoaded) {
       localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(userProfile));
@@ -183,19 +193,33 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isLoaded) {
-      // Create a lightweight version of history for storage if images are base64 (to avoid QuotaExceeded)
-      // For this demo, we assume storage is sufficient, but in production, we'd handle images differently.
-      localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
+      const lightweight = history.map(m => ({
+        ...m,
+        image: m.image && m.image.length > 500 ? undefined : m.image
+      }));
+      localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(lightweight));
     }
   }, [history, isLoaded]);
 
-  // Handle Reset Data (passed to SettingsView)
-  const handleResetData = () => {
-    if (window.confirm('确定要重置所有数据吗？这将清空你的历史记录。')) {
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_WATER, JSON.stringify(waterRecord));
+  }, [waterRecord]);
+
+  const handleResetData = async () => {
+    if (window.confirm('确定要重置所有数据吗？这将清空你的所有饮食记录。')) {
+      if (user) {
+        try {
+          await deleteAllMeals(user.id);
+        } catch (e) {
+          console.error('Failed to delete Supabase meals:', e);
+        }
+      }
       setUserProfile(defaultProfile);
-      setHistory(defaultHistory);
+      setHistory([]);
+      setWaterRecord({ date: getTodayDateStr(), glasses: 0, goal: 8 });
       localStorage.removeItem(STORAGE_KEY_PROFILE);
       localStorage.removeItem(STORAGE_KEY_HISTORY);
+      localStorage.removeItem(STORAGE_KEY_WATER);
       alert('数据已重置');
     }
   };
@@ -209,27 +233,30 @@ const App: React.FC = () => {
 
   const handleCapture = (base64: string) => {
     setCapturedImage(base64);
+    setPendingMealType(getAutoMealType());
     setCurrentScreen(Screen.RESULT);
   };
 
-  const handleAddToLog = async (data: NutritionData) => {
+  const handleAddToLog = async (data: NutritionData, mealType?: MealType) => {
+    const type = mealType || pendingMealType;
+    const now = new Date();
     const newMeal: Meal = {
       id: Date.now().toString(),
       name: data.foodName,
-      type: '加餐',
-      time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      type,
+      time: now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
       kcal: data.calories,
       image: capturedImage ? `data:image/jpeg;base64,${capturedImage}` : undefined,
+      created_at: now.toISOString(),
       macros: data.macros
     };
     
-    // 保存到 Supabase
     if (user) {
       try {
         const saved = await addMealToDb({
           user_id: user.id,
           name: data.foodName,
-          type: '加餐',
+          type,
           time: newMeal.time,
           calories: data.calories,
           protein: data.macros.protein,
@@ -238,6 +265,7 @@ const App: React.FC = () => {
           image_url: newMeal.image
         });
         newMeal.id = saved.id;
+        newMeal.created_at = saved.created_at;
       } catch (e) {
         console.error('Failed to save to Supabase:', e);
       }
@@ -247,17 +275,41 @@ const App: React.FC = () => {
     setCurrentScreen(Screen.DASHBOARD);
   };
 
-  // 将食谱添加为今日饮食
-  const handleAddRecipeToLog = (recipe: Recipe) => {
-    const cal = parseInt(recipe.cal.replace(/\D/g, '')) || 400; // 提取数字
+  const handleAddRecipeToLog = async (recipe: Recipe) => {
+    const cal = parseInt(recipe.cal.replace(/\D/g, '')) || 400;
+    const type = getAutoMealType();
+    const now = new Date();
     const newMeal: Meal = {
         id: Date.now().toString(),
         name: recipe.title,
-        type: '午餐', 
-        time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        type,
+        time: now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
         kcal: cal,
-        image: recipe.image
+        image: recipe.image,
+        created_at: now.toISOString(),
+        macros: { protein: Math.round(cal * 0.25 / 4), carbs: Math.round(cal * 0.5 / 4), fat: Math.round(cal * 0.25 / 9) }
     };
+    
+    if (user) {
+      try {
+        const saved = await addMealToDb({
+          user_id: user.id,
+          name: recipe.title,
+          type,
+          time: newMeal.time,
+          calories: cal,
+          protein: newMeal.macros!.protein,
+          carbs: newMeal.macros!.carbs,
+          fat: newMeal.macros!.fat,
+          image_url: recipe.image
+        });
+        newMeal.id = saved.id;
+        newMeal.created_at = saved.created_at;
+      } catch (e) {
+        console.error('Failed to save recipe to Supabase:', e);
+      }
+    }
+    
     setHistory([newMeal, ...history]);
     setCurrentScreen(Screen.DASHBOARD);
   };
@@ -273,9 +325,7 @@ const App: React.FC = () => {
     setCurrentScreen(Screen.MEAL_DETAIL);
   };
 
-  // 删除记录
   const handleDeleteMeal = async (mealId: string) => {
-    // 从 Supabase 删除
     if (user) {
       try {
         await deleteMealFromDb(mealId);
@@ -287,12 +337,10 @@ const App: React.FC = () => {
     setCurrentScreen(previousScreen); 
   };
 
-  // 更新用户目标
   const handleUpdateGoals = async (newProfile: Partial<typeof userProfile>) => {
     const updated = { ...userProfile, ...newProfile };
     setUserProfile(updated);
     
-    // 同步到 Supabase
     if (user) {
       try {
         await upsertUserProfile({
@@ -308,6 +356,23 @@ const App: React.FC = () => {
     }
   };
 
+  const handleAddWater = useCallback(() => {
+    setWaterRecord(prev => {
+      const today = getTodayDateStr();
+      if (prev.date !== today) {
+        return { date: today, glasses: 1, goal: prev.goal };
+      }
+      return { ...prev, glasses: prev.glasses + 1 };
+    });
+  }, []);
+
+  const handleRemoveWater = useCallback(() => {
+    setWaterRecord(prev => ({
+      ...prev,
+      glasses: Math.max(0, prev.glasses - 1)
+    }));
+  }, []);
+
   const showBottomNav = [Screen.DASHBOARD, Screen.STATS, Screen.RECIPES, Screen.PROFILE].includes(currentScreen);
 
   return (
@@ -318,8 +383,12 @@ const App: React.FC = () => {
       <div className="flex-1 relative overflow-hidden">
         {currentScreen === Screen.DASHBOARD && (
             <Dashboard 
-            history={history} 
+            todayMeals={todayMeals}
+            allHistory={history}
             userProfile={userProfile}
+            waterRecord={waterRecord}
+            onAddWater={handleAddWater}
+            onRemoveWater={handleRemoveWater}
             onNavigate={(s) => setCurrentScreen(s)} 
             onMealSelect={handleMealSelect}
             />
@@ -333,7 +402,6 @@ const App: React.FC = () => {
             <RecipesView onRecipeSelect={handleRecipeSelect} />
         )}
 
-        {/* 使用提取出的 RecipeDetailView 组件 */}
         {currentScreen === Screen.RECIPE_DETAIL && selectedRecipe && (
             <RecipeDetailView 
                 recipe={selectedRecipe}
@@ -345,6 +413,7 @@ const App: React.FC = () => {
         {currentScreen === Screen.PROFILE && (
             <ProfileView 
                 userProfile={userProfile}
+                history={history}
                 onNavigate={(s) => setCurrentScreen(s)}
                 onLogout={() => {
                     setUser(null);
@@ -387,7 +456,11 @@ const App: React.FC = () => {
         )}
 
         {currentScreen === Screen.NOTIFICATIONS && (
-            <NotificationsView onBack={() => setCurrentScreen(Screen.PROFILE)} />
+            <NotificationsView 
+                todayMeals={todayMeals}
+                userProfile={userProfile}
+                onBack={() => setCurrentScreen(Screen.PROFILE)} 
+            />
         )}
 
         {currentScreen === Screen.CAMERA && (
