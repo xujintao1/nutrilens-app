@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { Screen } from '../types';
+import React, { useState, useMemo } from 'react';
+import { Screen, Meal } from '../types';
 import { signOut } from '../lib/supabase';
 
 interface ProfileViewProps {
@@ -10,19 +10,90 @@ interface ProfileViewProps {
         goalWeight: number;
         height: number;
     };
+    history: Meal[];
     onNavigate: (s: Screen) => void;
     onLogout: () => void;
 }
 
-const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLogout }) => {
-  const [selectedDate, setSelectedDate] = useState<number>(new Date().getDate());
+function getDateKey(dateStr?: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
-  // Calculate BMI
+const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, history, onNavigate, onLogout }) => {
+  const now = new Date();
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
+  const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [selectedDate, setSelectedDate] = useState<number>(now.getDate());
+
   const bmi = (userProfile.weight / ((userProfile.height / 100) * (userProfile.height / 100))).toFixed(1);
+  const bmiNum = parseFloat(bmi);
+  const bmiLabel = bmiNum < 18.5 ? '偏瘦' : bmiNum < 24 ? '正常' : bmiNum < 28 ? '偏胖' : '肥胖';
+  const bmiColor = bmiNum < 18.5 ? 'text-blue-500 bg-blue-50' : bmiNum < 24 ? 'text-green-600 bg-green-50' : bmiNum < 28 ? 'text-orange-500 bg-orange-50' : 'text-red-500 bg-red-50';
 
-  // 模拟日历数据
-  const days = Array.from({ length: 31 }, (_, i) => i + 1);
-  const checkedDays = [1, 2, 4, 5, 8, 9, 10, 12, 15, 16, 17, 18, 20];
+  const datesWithMeals = useMemo(() => {
+    const set = new Set<string>();
+    history.forEach(m => {
+      const key = getDateKey(m.created_at);
+      if (key) set.add(key);
+    });
+    return set;
+  }, [history]);
+
+  const streak = useMemo(() => {
+    let count = 0;
+    const d = new Date();
+    const todayKey = getDateKey(d.toISOString());
+    if (!datesWithMeals.has(todayKey)) {
+      d.setDate(d.getDate() - 1);
+    }
+    while (true) {
+      const key = getDateKey(d.toISOString());
+      if (datesWithMeals.has(key)) {
+        count++;
+        d.setDate(d.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+    return count;
+  }, [datesWithMeals]);
+
+  const calendarData = useMemo(() => {
+    const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    return { firstDay, daysInMonth };
+  }, [viewYear, viewMonth]);
+
+  const selectedDateMeals = useMemo(() => {
+    const key = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(selectedDate).padStart(2, '0')}`;
+    return history.filter(m => getDateKey(m.created_at) === key);
+  }, [history, viewYear, viewMonth, selectedDate]);
+
+  const selectedDateCalories = selectedDateMeals.reduce((s, m) => s + m.kcal, 0);
+
+  const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+  const goToPrevMonth = () => {
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear(viewYear - 1);
+    } else {
+      setViewMonth(viewMonth - 1);
+    }
+    setSelectedDate(1);
+  };
+
+  const goToNextMonth = () => {
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear(viewYear + 1);
+    } else {
+      setViewMonth(viewMonth + 1);
+    }
+    setSelectedDate(1);
+  };
 
   return (
     <div className="h-full flex flex-col bg-[#F9FBFA] overflow-y-auto no-scrollbar pb-32">
@@ -31,7 +102,6 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLo
         <div className="flex gap-2">
             <button onClick={() => onNavigate(Screen.NOTIFICATIONS)} className="p-2 rounded-full bg-gray-50 text-gray-400 hover:text-primary transition-colors relative">
                 <span className="material-symbols-outlined text-[22px]">notifications</span>
-                <span className="absolute top-2 right-2 size-2 bg-red-400 rounded-full border border-white"></span>
             </button>
             <button onClick={() => onNavigate(Screen.SETTINGS)} className="p-2 rounded-full bg-gray-50 text-gray-400 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-[22px]">settings</span>
@@ -39,7 +109,6 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLo
         </div>
       </header>
 
-      {/* 用户信息卡片 */}
       <section className="px-6 py-6">
         <div className="flex items-center gap-4">
             <div className="size-20 rounded-full p-0.5 bg-gradient-to-tr from-primary to-accent shadow-md">
@@ -47,32 +116,51 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLo
             </div>
             <div>
                 <h2 className="text-xl font-bold text-gray-800">{userProfile.name}</h2>
-                <p className="text-gray-400 text-sm font-medium mt-0.5">连续打卡 <span className="text-primary font-bold">12</span> 天</p>
-                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-primary/10 rounded-full">
-                    <span className="material-symbols-outlined text-primary text-[14px]">workspace_premium</span>
-                    <span className="text-[10px] font-bold text-primary uppercase">专业版会员</span>
+                <p className="text-gray-400 text-sm font-medium mt-0.5">
+                  {streak > 0 
+                    ? <>连续打卡 <span className="text-primary font-bold">{streak}</span> 天</>
+                    : '今天还没有记录哦'}
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-primary/10 rounded-full">
+                    <span className="material-symbols-outlined text-primary text-[14px]">local_fire_department</span>
+                    <span className="text-[10px] font-bold text-primary">{history.length} 餐记录</span>
+                  </div>
                 </div>
             </div>
         </div>
       </section>
 
-      {/* 核心统计日历 */}
+      {/* Calendar */}
       <section className="px-6 mb-6">
         <div className="bg-white rounded-[2rem] p-6 shadow-soft border border-gray-50">
             <div className="flex items-center justify-between mb-4">
+                <button onClick={goToPrevMonth} className="size-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors">
+                  <span className="material-symbols-outlined text-gray-400 text-[20px]">chevron_left</span>
+                </button>
                 <h3 className="font-bold text-gray-800 flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary">calendar_month</span>
-                    记录日历
+                    {viewYear}年{monthNames[viewMonth]}
                 </h3>
-                <span className="text-xs font-bold text-gray-400">2024年3月</span>
+                <button onClick={goToNextMonth} className="size-8 rounded-full hover:bg-gray-100 flex items-center justify-center transition-colors">
+                  <span className="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+                </button>
             </div>
             <div className="grid grid-cols-7 gap-y-3 text-center">
                 {['日', '一', '二', '三', '四', '五', '六'].map(d => (
                     <span key={d} className="text-[10px] font-bold text-gray-300 uppercase">{d}</span>
                 ))}
-                {days.map(day => {
-                    const isChecked = checkedDays.includes(day);
+                {Array.from({ length: calendarData.firstDay }, (_, i) => (
+                  <div key={`empty-${i}`} />
+                ))}
+                {Array.from({ length: calendarData.daysInMonth }, (_, i) => {
+                    const day = i + 1;
+                    const dateKey = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const hasRecord = datesWithMeals.has(dateKey);
                     const isSelected = selectedDate === day;
+                    const isCurrentMonth = viewMonth === now.getMonth() && viewYear === now.getFullYear();
+                    const isToday = isCurrentMonth && day === now.getDate();
+                    
                     return (
                         <div key={day} className="flex flex-col items-center justify-center">
                             <button 
@@ -80,13 +168,15 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLo
                                 className={`size-8 flex items-center justify-center rounded-xl text-xs font-bold transition-all relative
                                 ${isSelected 
                                     ? 'bg-gray-800 text-white shadow-lg scale-110 z-10' 
-                                    : isChecked 
+                                    : hasRecord 
                                         ? 'bg-primary text-white shadow-md' 
-                                        : 'text-gray-400 hover:bg-gray-50'
+                                        : isToday 
+                                            ? 'ring-2 ring-primary/30 text-primary'
+                                            : 'text-gray-400 hover:bg-gray-50'
                                 }`}
                             >
                                 {day}
-                                {isChecked && !isSelected && (
+                                {hasRecord && !isSelected && (
                                     <div className="absolute -bottom-1 w-1 h-1 bg-primary/50 rounded-full"></div>
                                 )}
                             </button>
@@ -97,9 +187,11 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLo
             
             <div className="mt-6 pt-4 border-t border-gray-50 flex items-center justify-between animate-fade-in">
                 <div className="flex flex-col">
-                    <span className="text-xs font-bold text-gray-400 uppercase">3月{selectedDate}日</span>
+                    <span className="text-xs font-bold text-gray-400 uppercase">{viewMonth + 1}月{selectedDate}日</span>
                     <span className="text-sm font-bold text-gray-800">
-                        {checkedDays.includes(selectedDate) ? "已完成今日目标 🎉" : "当日无记录"}
+                        {selectedDateMeals.length > 0 
+                          ? `${selectedDateMeals.length} 餐 · ${selectedDateCalories} kcal`
+                          : '当日无记录'}
                     </span>
                 </div>
                 <button 
@@ -112,7 +204,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLo
         </div>
       </section>
 
-      {/* 指标数据卡片 - Click to Goals */}
+      {/* Stats Cards */}
       <section className="px-6 grid grid-cols-2 gap-4 mb-8">
         <div onClick={() => onNavigate(Screen.GOALS)} className="bg-white p-5 rounded-[1.5rem] shadow-soft border border-gray-50 cursor-pointer active:scale-[0.98] transition-transform">
             <div className="flex items-center gap-2 text-gray-400 mb-1">
@@ -133,11 +225,11 @@ const ProfileView: React.FC<ProfileViewProps> = ({ userProfile, onNavigate, onLo
             <div className="flex items-baseline gap-1">
                 <span className="text-2xl font-black text-gray-800">{bmi}</span>
             </div>
-            <div className="mt-2 text-[10px] font-bold text-accent-dark px-2 py-0.5 bg-accent/20 rounded-md inline-block">健康</div>
+            <div className={`mt-2 text-[10px] font-bold px-2 py-0.5 rounded-md inline-block ${bmiColor}`}>{bmiLabel}</div>
         </div>
       </section>
 
-      {/* 菜单列表 */}
+      {/* Menu */}
       <section className="px-6 pb-12 space-y-6">
         <div className="bg-white rounded-[2rem] shadow-soft overflow-hidden border border-gray-50 divide-y divide-gray-50">
             <MenuItem icon="person_outline" label="个人资料" onClick={() => onNavigate(Screen.SETTINGS)} />

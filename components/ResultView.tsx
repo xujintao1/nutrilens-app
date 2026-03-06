@@ -1,15 +1,14 @@
 
 import React, { useEffect, useState } from 'react';
-import { NutritionData } from '../types';
-import { analyzeFoodImage } from '../geminiService';
+import { NutritionData, MealType, MEAL_TYPES } from '../types';
+import { analyzeFoodImage } from '../aiService';
 
 interface ResultViewProps {
   image: string;
-  onAdd: (data: NutritionData) => void;
+  onAdd: (data: NutritionData, mealType?: MealType) => void;
   onBack: () => void;
 }
 
-// 模拟数据，防止API失败导致页面无法显示
 const MOCK_DATA: NutritionData = {
     foodName: "演示用-香煎鸡胸肉",
     description: "由于AI连接失败，这是显示的演示数据。看起来这是一份健康的鸡肉沙拉。",
@@ -25,13 +24,20 @@ const MOCK_DATA: NutritionData = {
     }
 };
 
+function getAutoMealType(): MealType {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 10) return '早餐';
+  if (hour >= 10 && hour < 14) return '午餐';
+  if (hour >= 14 && hour < 20) return '晚餐';
+  return '加餐';
+}
+
 const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
   const [data, setData] = useState<NutritionData | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Edit state
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<NutritionData | null>(null);
+  const [selectedMealType, setSelectedMealType] = useState<MealType>(getAutoMealType());
 
   useEffect(() => {
     const runAnalysis = async () => {
@@ -41,7 +47,6 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
         setEditForm(result);
       } catch (err) {
         console.error("Analysis failed, using mock data for UI demo:", err);
-        // CRITICAL FIX: 不要直接 onBack()，而是加载模拟数据，确保用户能看到结果页
         setData(MOCK_DATA);
         setEditForm(MOCK_DATA);
       } finally {
@@ -96,7 +101,6 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
           <span className="material-symbols-outlined text-gray-800">arrow_back</span>
         </button>
         <h2 className="text-sm font-bold tracking-widest uppercase text-gray-400">分析结果</h2>
-        {/* Header Edit Button */}
         <button 
             onClick={() => setIsEditing(true)}
             className="h-9 px-4 rounded-full bg-gray-100 text-gray-800 font-bold text-sm flex items-center justify-center hover:bg-gray-200 transition-colors"
@@ -112,7 +116,6 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
             <span className="material-symbols-outlined text-primary text-[18px]">auto_awesome</span>
             <span className="text-xs font-bold text-gray-800">AI 分析结果</span>
           </div>
-          {/* Image Floating Edit Button */}
           <button 
             onClick={() => setIsEditing(true)}
             className="absolute bottom-4 right-4 size-11 rounded-full bg-white shadow-lg flex items-center justify-center active:scale-95 transition-transform"
@@ -137,12 +140,34 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
         </div>
       </div>
 
+      {/* Meal Type Selection */}
+      <div className="px-6 mt-6">
+        <div className="flex items-center gap-2 mb-3 px-1">
+          <span className="material-symbols-outlined text-gray-400 text-[18px]">restaurant</span>
+          <span className="text-sm font-bold text-gray-600">记录为</span>
+        </div>
+        <div className="flex gap-2">
+          {MEAL_TYPES.map(type => (
+            <button
+              key={type}
+              onClick={() => setSelectedMealType(type)}
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                selectedMealType === type 
+                  ? 'bg-primary text-white shadow-md' 
+                  : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+              }`}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="mt-8 px-4">
         <div className="bg-background-light rounded-[2.5rem] p-6 relative overflow-hidden">
           <div className="relative z-10 flex flex-col gap-8">
             <div className="flex items-center justify-between px-2">
               <h3 className="text-lg font-bold text-gray-800">营养成分分布</h3>
-              <button onClick={() => alert('每日目标：热量 2000 千卡\n蛋白质：150克\n碳水：250克\n脂肪：70克')} className="text-xs font-semibold text-primary bg-white px-3 py-1 rounded-full shadow-sm hover:bg-primary hover:text-white transition-colors">每日目标</button>
             </div>
 
             <div className="flex items-center gap-6">
@@ -183,28 +208,24 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
             <button onClick={() => setIsEditing(true)} className="flex-none w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors">
                 <span className="material-symbols-outlined">edit</span>
             </button>
-            <button onClick={() => onAdd(data)} className="flex-1 h-16 bg-primary text-white font-bold text-lg rounded-2xl shadow-glow hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+            <button onClick={() => onAdd(data, selectedMealType)} className="flex-1 h-16 bg-primary text-white font-bold text-lg rounded-2xl shadow-glow hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined">add_circle</span>
-                <span>加入今日记录</span>
+                <span>加入{selectedMealType}记录</span>
             </button>
         </div>
       </div>
 
-      {/* Edit Modal Overlay */}
+      {/* Edit Modal */}
       {isEditing && editForm && (
         <div className="absolute inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-t-[1.5rem] animate-slide-up shadow-2xl h-[90%] flex flex-col overflow-hidden">
-            {/* Modal Header */}
             <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100 bg-white">
               <button onClick={() => setIsEditing(false)} className="text-gray-500 font-medium px-4 py-2">取消</button>
               <h3 className="text-lg font-bold text-gray-800">编辑信息</h3>
               <button onClick={handleSaveEdit} className="text-primary font-bold px-4 py-2">保存</button>
             </div>
             
-            {/* Modal Content - List Style Form */}
             <div className="flex-1 overflow-y-auto no-scrollbar bg-background-light p-4 space-y-6">
-              
-              {/* Section 1: Basic Info */}
               <div className="bg-white rounded-xl overflow-hidden shadow-sm">
                 <FormRow label="名称">
                     <input 
@@ -227,7 +248,6 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
                 </FormRow>
               </div>
 
-              {/* Section 2: Energy */}
               <div className="bg-white rounded-xl overflow-hidden shadow-sm">
                 <FormRow label="总热量 (千卡)">
                     <input 
@@ -239,7 +259,6 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
                 </FormRow>
               </div>
 
-              {/* Section 3: Macros */}
               <div className="space-y-2">
                 <h4 className="ml-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">营养素含量 (克)</h4>
                 <div className="bg-white rounded-xl overflow-hidden shadow-sm">
@@ -271,7 +290,6 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
                     </FormRow>
                 </div>
               </div>
-
             </div>
           </div>
         </div>
@@ -280,7 +298,6 @@ const ResultView: React.FC<ResultViewProps> = ({ image, onAdd, onBack }) => {
   );
 };
 
-// Helper for standard list items
 const FormRow = ({ label, children }: { label: string, children?: React.ReactNode }) => (
     <div className="flex items-center justify-between p-4 h-14">
         <span className="text-gray-800 font-medium text-[15px]">{label}</span>
